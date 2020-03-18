@@ -16,18 +16,20 @@
 import argparse
 import glob
 import json
+import logging
 import os
 from pyspark.sql import SparkSession
 
-if __name__ == "main":
-    main()
-
 def main():
+
+    # LOGGER = logging.getLogger('pyspark')
+    # LOGGER.info('Starting program...')
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_file", help="")
     args = parser.parse_args()
-    if args.config_file:
+
+    if args.config_file is not None:
         with open(args.config_file) as json_config:
             try:
                 config = json.load(json_config)
@@ -51,12 +53,21 @@ def main():
             if config['output'] is None:
                 raise ValueError("Specify name of output file (of type json) for this job!")
 
+        print("Creating Spark Session...")
+
         spark = SparkSession.builder.appName(config['sparkJobName']).master('local[*]').enableHiveSupport().getOrCreate()
+
+        print("Spark Session created")
+        # sc = spark.sparkContext
+        # log4jLogger = sc._jvm.org.apache.log4j
+        # LOGGER = log4jLogger.LogManager.getLogger(__name__)
+        # LOGGER.info("Spark Session created")
 
         df1 = read(spark, config['source1'])
         df2 = read(spark, config['source2'])
 
-        print("The data sources are loaded to the dataframes!")
+        # LOGGER.info("The data sources are loaded to the dataframes. Calculating differences.")
+        print("The data sources are loaded to the dataframes. Has {} and {} row count respectively".format(df1.count(), df2.count()))
 
         has_difference, result = get_diff(df1, df2, config['primaryKey'])
 
@@ -66,8 +77,11 @@ def main():
             print(result['message'])
             if result['difference'] is not None:
                 print('Writing results to file %s'.format(config['output']))
-                with open(config['output'], 'w', encoding='utf-8') as f:
+                with open(config['output'], 'w') as f:
                     json.dump(result['difference'], f, ensure_ascii=False, indent=2)
+
+        print("Stopping Spark Session")
+        spark.stop()
 
     else:
         raise ValueError("Please specify the configuration file!")
@@ -76,7 +90,7 @@ def main():
 def validate_config_data_source(source):
 
     if source is None:
-        return False, "Specify data source type: csv, parquet, or hive!")
+        return False, "Specify data source type: csv, parquet, or hive!"
     else:
         if source['type'] == 'csv':
             if source['hasHeader'] is None or source['separator'] is None or source['filepath'] is None:
@@ -93,7 +107,7 @@ def validate_config_data_source(source):
     return True, None
 
 # Generic wrapper function to read source data and return a dataframe
-def read(source):
+def read(spark, source):
 
     if source['type'] == 'hive':
         return spark.sql(source['query'])
@@ -121,7 +135,7 @@ def read_from_local(spark, filepath, fileformat, header=None, separator=None):
         filepath = filepath[:-1]
 
     if (os.path.isdir(filepath) and glob.glob('filepath/*.csv')) or filepath[-4:] == '.csv':
-        df = spark.read.csv(filepath, header, separator)
+        df = spark.read.csv(filepath, header=header, sep=separator)
     elif (os.path.isdir(filepath) and glob.glob('filepath/*.parquet')) or filepath[-8:] == '.parquet':
         df = spark.read.parquet(filepath)
     else:
@@ -151,7 +165,7 @@ def get_diff(a, b, pk):
 
     # 1. Check first if schemas are the same
     # Todo: Add schema differences in the dictionary
-    if df1.schema.names != df2.schema.names:
+    if a.schema.names != b.schema.names:
         return True, { "message" : "Schemas do not match." }
 
 
@@ -169,7 +183,7 @@ def get_diff(a, b, pk):
 
     result_diff = { "a_not_in_b": [], "b_not_in_a": [], "same_key_but_diff_values": [] }
 
-    column_names = df1.schema.names
+    column_names = a.schema.names
 
     a_pks = a_minus_b.select(pk).rdd.flatMap(lambda x: x).collect()
     b_pks = b_minus_a.select(pk).rdd.flatMap(lambda x: x).collect()
@@ -188,3 +202,6 @@ def get_diff(a, b, pk):
         result_diff['b_not_in_a'] = list(b_minus_a_2.select(pk).toPandas()[pk])
 
     return True, { "message": "Mismatch on some rows.", "difference": result_diff }
+
+if __name__ == "__main__":
+    main()
