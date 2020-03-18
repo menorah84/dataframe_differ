@@ -45,6 +45,9 @@ def main():
             if not is_source_valid:
                 raise ValueError('Error in config source2: %s'.format(message))
 
+            if config['primaryKey'] is None:
+                raise ValueError("Specify column name of the primary key!")
+
             if config['output'] is None:
                 raise ValueError("Specify name of output file (of type json) for this job!")
 
@@ -53,7 +56,9 @@ def main():
         df1 = read(spark, config['source1'])
         df2 = read(spark, config['source2'])
 
-        has_difference, result = get_diff(df1, df2)
+        print("The data sources are loaded to the dataframes!")
+
+        has_difference, result = get_diff(df1, df2, config['primaryKey'])
 
         if not has_difference:
             print(result['message'])
@@ -65,7 +70,7 @@ def main():
                     json.dump(result['difference'], f, ensure_ascii=False, indent=2)
 
     else:
-        raise ValueError("Please specify the configuration file!")
+        raise ValueError("Please specify the configuration file!"
 
 # Validate option
 def validate_config_data_source(source):
@@ -74,11 +79,11 @@ def validate_config_data_source(source):
         return False, "Specify data source type: csv, parquet, or hive!")
     else:
         if source['type'] == 'csv':
-            if source['hasHeader'] is None or config['source']['separator'] is None or ['source']['filepath'] is None:
+            if source['hasHeader'] is None or source['separator'] is None or source['filepath'] is None:
                 return False, "Missing hasHeader, separator, and/or filepath arguments in config file for type csv data source!"
         elif source['type'] == 'hive':
             if source['query'] is None:
-                return False, "Missing query string in config file for type hive data source!
+                return False, "Missing query string in config file for type hive data source!"
         elif source['type'] == 'parquet':
             if ['source']['filepath'] is None:
                 return False, "Missing filepath argument in config file for type parquet data source!"
@@ -103,7 +108,7 @@ def read_from_s3(spark, filepath, fileformat, header=None, separator=None):
     if (fileformat == 'csv'):
         df = spark.read.csv(filepath, header=header, separator=separator)
     elif (fileformat == 'parquet'):
-        df = spark.read.csv.(filepath)
+        df = spark.read.csv(filepath)
     else:
         raise ValuError("File format must be either parquet or csv!")
 
@@ -111,14 +116,13 @@ def read_from_s3(spark, filepath, fileformat, header=None, separator=None):
 
 # Get dataframe from local file system
 def read_from_local(spark, filepath, fileformat, header=None, separator=None):
-    // We assume this is a local file system
-
+    # We assume this is a local file system
     if filepath.endswith('/'):
         filepath = filepath[:-1]
 
-    if (os.path.isdir(filepath) and glob.glob('filepath/*.csv') or filepath[-4:] == '.csv':
+    if (os.path.isdir(filepath) and glob.glob('filepath/*.csv')) or filepath[-4:] == '.csv':
         df = spark.read.csv(filepath, header, separator)
-    elif (os.path.isdir(filepath) and glob.glob('filepath/*.parquet') or filepath[-8:] == '.parquet':
+    elif (os.path.isdir(filepath) and glob.glob('filepath/*.parquet')) or filepath[-8:] == '.parquet':
         df = spark.read.parquet(filepath)
     else:
         raise ValueError("No valid csv or parquet file/files in filepath!")
