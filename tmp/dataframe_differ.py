@@ -70,7 +70,7 @@ def main():
                     json.dump(result['difference'], f, ensure_ascii=False, indent=2)
 
     else:
-        raise ValueError("Please specify the configuration file!"
+        raise ValueError("Please specify the configuration file!")
 
 # Validate option
 def validate_config_data_source(source):
