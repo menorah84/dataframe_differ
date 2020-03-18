@@ -76,7 +76,7 @@ def main():
         else:
             print(result['message'])
             if result['difference'] is not None:
-                print('Writing results to file %s'.format(config['output']))
+                print('Writing results to file {}'.format(config['output']))
                 with open(config['output'], 'w') as f:
                     json.dump(result['difference'], f, ensure_ascii=False, indent=2)
 
@@ -180,8 +180,8 @@ def get_diff(a, b, pk):
         return False, { "message": "Both are equal." }
 
     # 4. From the symmetric difference, find the rows that has the same keys on both side: it means that some column values for these same-key rows do not match
-
     result_diff = { "a_not_in_b": [], "b_not_in_a": [], "same_key_but_diff_values": [] }
+    result_diff['same_key_but_diff_values'] = sorted(result_diff['same_key_but_diff_values'], key = lambda x: x[pk])
 
     column_names = a.schema.names
 
@@ -190,16 +190,18 @@ def get_diff(a, b, pk):
     same_key_diff_val = list(set(a_pks) & set(b_pks))
 
     result_diff['same_key_but_diff_values'] = get_diff_same_keys(a_minus_b, b_minus_a, column_names, pk, same_key_diff_val)
+    result_diff['same_key_but_diff_values'] = sorted(result_diff['same_key_but_diff_values'], key = lambda x: x[pk])
 
     # 5. List the symmetric difference with the exception from step 4
-
     if len(a_minus_b.take(1)) > 0:
         a_minus_b_2 = a_minus_b.subtract(a_minus_b[a_minus_b[pk].isin(same_key_diff_val)])
         result_diff['a_not_in_b'] = list(a_minus_b_2.select(pk).toPandas()[pk])
+        result_diff['a_not_in_b'].sort()
 
     if len(b_minus_a.take(1)) > 0:
         b_minus_a_2 = b_minus_a.subtract(b_minus_a[b_minus_a[pk].isin(same_key_diff_val)])
         result_diff['b_not_in_a'] = list(b_minus_a_2.select(pk).toPandas()[pk])
+        result_diff['b_not_in_a'].sort()
 
     return True, { "message": "Mismatch on some rows.", "difference": result_diff }
 
