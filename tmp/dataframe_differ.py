@@ -18,6 +18,7 @@ import glob
 import json
 import logging
 import os
+from functools import reduce
 from pyspark.sql import SparkSession
 
 def main():
@@ -66,6 +67,14 @@ def main():
         df1 = read(spark, config['source1'])
         df2 = read(spark, config['source2'])
 
+        # check if there are columns to be compared from each side are specified
+        # the two should be corresponding in sequence
+        if "columns_to_compare" in config['source1'] or "columns_to_compare" in config['source2']:
+            cols_df1 = config['source1']['columns_to_compare'] if "columns_to_compare" in config['source1'] else df1.schema.names
+            cols_df2 = config['source2']['columns_to_compare'] if "columns_to_compare" in config['source2'] else df2.schema.names
+
+            df1, df2 = apply_columns_to_compare(df1, cols_df1, df2, cols_df2)
+
         # LOGGER.info("The data sources are loaded to the dataframes. Calculating differences.")
         print("The data sources are loaded to the dataframes. Has {} and {} row count respectively".format(df1.count(), df2.count()))
 
@@ -75,7 +84,7 @@ def main():
             print(result['message'])
         else:
             print(result['message'])
-            if result['difference'] is not None:
+            if "difference" in result:
                 print('Writing results to file {}'.format(config['output']))
                 with open(config['output'], 'w') as f:
                     json.dump(result['difference'], f, ensure_ascii=False, indent=2)
@@ -159,6 +168,21 @@ def get_diff_same_keys(df1, df2, column_names, pk, same_keys):
         diff_cols.append( {pk: id, "columns": cols} )
 
     return diff_cols
+
+
+def apply_columns_to_compare(a, cols_a, b, cols_b):
+
+    a = a.select(cols_a.split(','))
+    old_schema_a = a.schema.names
+    new_schema_a = [col[col.rfind(".")+1:].lower() for col in old_schema_a]
+    a = reduce(lambda a, idx: a.withColumnRenamed(old_schema_a[idx], new_schema_a[idx]), xrange(len(old_schema_a)), a)
+
+    b = b.select(cols_b.split(','))
+    old_schema_b = b.schema.names
+    new_schema_b = [col[col.rfind(".")+1:].lower() for col in schema_for_b.split(',')]
+    b = reduce(lambda b, idx: b.withColumnRenamed(old_schema_b[idx], new_schema_b[idx]), xrange(len(old_schema_b)), b)
+
+    return a, b
 
 # Get difference between two dataframes
 def get_diff(a, b, pk):
