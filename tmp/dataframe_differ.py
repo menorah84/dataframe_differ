@@ -110,7 +110,7 @@ def validate_config_data_source(source):
             if source['query'] is None:
                 return False, "Missing query string in config file for type hive data source!"
         elif source['type'] == 'parquet':
-            if ['source']['filepath'] is None:
+            if source['filepath'] is None:
                 return False, "Missing filepath argument in config file for type parquet data source!"
         else:
             return False, "Data source type should be: csv, parquet, or hive!"
@@ -123,21 +123,19 @@ def read(spark, source):
     if source['type'] == 'hive':
         return spark.sql(source['query'])
     elif source['filepath'].startswith('s3'):
-        return read_from_s3(spark, source['filepath'], source['type'], source['hasHeader'], source['separator'])
+        if source['type'] == 'csv':
+            return spark.read.csv(source['filepath'], header=source['header'], separator=source['separator'])
+        elif source['type'] == 'parquet':
+            return spark.read.parquet(source['filepath'])
+        else:
+            raise ValuError("File format must be either parquet or csv!")
     else:
-        return read_from_local(spark, source['filepath'], source['type'], source['hasHeader'], source['separator'])
-
-# Get dataframe from AWS S3
-def read_from_s3(spark, filepath, fileformat, header=None, separator=None):
-
-    if (fileformat == 'csv'):
-        df = spark.read.csv(filepath, header=header, separator=separator)
-    elif (fileformat == 'parquet'):
-        df = spark.read.csv(filepath)
-    else:
-        raise ValuError("File format must be either parquet or csv!")
-
-    return df
+        if source['type'] == 'csv':
+            return read_from_local(spark, source['filepath'], source['type'], source['hasHeader'], source['separator'])
+        elif source['type'] == 'parquet':
+            return read_from_local(spark, source['filepath'], source['type'])
+        else:
+            raise ValuError("File format must be either parquet or csv!")
 
 # Get dataframe from local file system
 def read_from_local(spark, filepath, fileformat, header=None, separator=None):
@@ -145,9 +143,9 @@ def read_from_local(spark, filepath, fileformat, header=None, separator=None):
     if filepath.endswith('/'):
         filepath = filepath[:-1]
 
-    if (os.path.isdir(filepath) and glob.glob('filepath/*.csv')) or filepath[-4:] == '.csv':
+    if (os.path.isdir(filepath) and glob.glob(filepath + '/*.csv')) or filepath[-4:] == '.csv':
         df = spark.read.csv(filepath, header=header, sep=separator)
-    elif (os.path.isdir(filepath) and glob.glob('filepath/*.parquet')) or filepath[-8:] == '.parquet':
+    elif (os.path.isdir(filepath) and glob.glob(filepath + '/*.parquet')) or filepath[-8:] == '.parquet':
         df = spark.read.parquet(filepath)
     else:
         raise ValueError("No valid csv or parquet file/files in filepath!")
