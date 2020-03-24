@@ -164,7 +164,7 @@ def apply_columns_to_compare(a, cols_a, b, cols_b):
 
     b = b.select(['`{0}`'.format(col) for col in cols_b.split(',')])
     old_schema_b = b.schema.names
-    new_schema_b = [col[col.rfind(".")+1:].lower() for col in schema_for_b.split(',')]
+    new_schema_b = [col[col.rfind(".")+1:].lower() for col in old_schema]
     b = reduce(lambda b, idx: b.withColumnRenamed(old_schema_b[idx], new_schema_b[idx]), xrange(len(old_schema_b)), b)
 
     return a, b
@@ -247,14 +247,14 @@ def get_diff(a, b, pk):
     if len(a_minus_b.take(1)) > 0:
         start_time = time.time()
         only_in_a = a_minus_b.subtract(common_keys_with_diff_a)
-        result_diff['a_not_in_b'] = list(only_in_a.select(pk).toPandas()[pk])
+        result_diff['a_not_in_b'] = only_in_a.select(pk).rdd.flatMap(lambda x: x).collect()
         result_diff['a_not_in_b'].sort()
         print("[LOG] result_diff['a_not_in_b']: %s" % (time.time() - start_time))
 
     if len(b_minus_a.take(1)) > 0:
         start_time = time.time()
         only_in_b = b_minus_a.subtract(common_keys_with_diff_b)
-        result_diff['b_not_in_a'] = list(only_in_b.select(pk).toPandas()[pk])
+        result_diff['b_not_in_a'] = only_in_b.select(pk).rdd.flatMap(lambda x: x).collect()
         result_diff['b_not_in_a'].sort()
         print("[LOG] result_diff['b_not_in_a']: %s" % (time.time() - start_time))
 
