@@ -18,8 +18,10 @@ import glob
 import json
 import logging
 import os
+import time
 from functools import reduce
 from pyspark.sql import SparkSession
+from pyspark.storagelevel import StorageLevel
 
 def main():
 
@@ -27,7 +29,7 @@ def main():
     # LOGGER.info('Starting program...')
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config_file", help="")
+    parser.add_argument("--config-file", help="")
     args = parser.parse_args()
 
     if args.config_file is not None:
@@ -152,37 +154,42 @@ def read_from_local(spark, filepath, fileformat, header=None, separator=None):
 
     return df
 
-# Get difference between two dataframes who have rows with same keys
-def get_diff_same_keys(df1, df2, column_names, pk, same_keys):
-    diff_cols = []
-
-    for id in same_keys:
-        row1 = df1.filter(df1[pk] == id).first()
-        row2 = df2.filter(df2[pk] == id).first()
-        cols = []
-
-        for col in column_names:
-            if row1[col] != row2[col]:
-                cols.append( {col: { "a": row1[col], "b": row2[col] } } )
-
-        diff_cols.append( {pk: id, "columns": cols} )
-
-    return diff_cols
-
 
 def apply_columns_to_compare(a, cols_a, b, cols_b):
 
-    a = a.select(cols_a.split(','))
+    a = a.select(['`{0}`'.format(col) for col in cols_a.split(',')])
     old_schema_a = a.schema.names
     new_schema_a = [col[col.rfind(".")+1:].lower() for col in old_schema_a]
     a = reduce(lambda a, idx: a.withColumnRenamed(old_schema_a[idx], new_schema_a[idx]), xrange(len(old_schema_a)), a)
 
-    b = b.select(cols_b.split(','))
+    b = b.select(['`{0}`'.format(col) for col in cols_b.split(',')])
     old_schema_b = b.schema.names
     new_schema_b = [col[col.rfind(".")+1:].lower() for col in schema_for_b.split(',')]
     b = reduce(lambda b, idx: b.withColumnRenamed(old_schema_b[idx], new_schema_b[idx]), xrange(len(old_schema_b)), b)
 
     return a, b
+
+
+# Get difference between two dataframes who have rows with same keys
+def get_diff_same_keys(a_minus_b, b_minus_a, column_names, pk):
+    diff_cols = []
+
+    def compare(row):
+        diff_columns = []
+        for col in column_names:
+            if row[1][0][col] != row[1][1][col]:
+                diff = { "column": col, "value_a": row[1][0][col], "value_b": row[1][1][col] }
+                diff_columns.append(diff)
+
+        return ( row[0],  { pk: row[0], "columns": diff_columns } )
+
+    # convert to Pair RDD for joining
+    ab_pair_rdd = a_minus_b.rdd.map(lambda x: (x[pk], x))
+    ba_pair_rdd = b_minus_a.rdd.map(lambda y: (y[pk], y))
+    joined_rdd = ab_pair_rdd.join(ba_pair_rdd)
+
+    return joined_rdd.map(compare).map(lambda pair: pair[1]).collect()
+
 
 # Get difference between two dataframes
 def get_diff(a, b, pk):
@@ -190,42 +197,66 @@ def get_diff(a, b, pk):
     # 1. Check first if schemas are the same
     # Todo: Add schema differences in the dictionary
     if a.schema.names != b.schema.names:
+        print(a.schema.names)
+        print(b.schema.names)
         return True, { "message" : "Schemas do not match." }
-
 
     # 2. Check if same number of rows
     # May not be useful after all, as we are inspecting per row
 
     # 3. (Symmetric difference) Eliminate intersection of rows from each side: if nothing remains on both side, it means they are equal
+    start_time = time.time()
     a_minus_b = a.subtract(a.intersect(b))
+    a_minus_b.cache()
+    a_minus_b.head()
+    print("[LOG] a_minus_b: %s" % (time.time() - start_time))
+
+    start_time = time.time()
     b_minus_a = b.subtract(b.intersect(a))
+    b_minus_a.cache()
+    b_minus_a.head()
+    print("[LOG] b_minus_a: %s" % (time.time() - start_time))
 
     if len(a_minus_b.take(1)) == 0 and len(b_minus_a.take(1)) == 0:
         return False, { "message": "Both are equal." }
 
     # 4. From the symmetric difference, find the rows that has the same keys on both side: it means that some column values for these same-key rows do not match
     result_diff = { "a_not_in_b": [], "b_not_in_a": [], "same_key_but_diff_values": [] }
-    result_diff['same_key_but_diff_values'] = sorted(result_diff['same_key_but_diff_values'], key = lambda x: x[pk])
-
     column_names = a.schema.names
 
-    a_pks = a_minus_b.select(pk).rdd.flatMap(lambda x: x).collect()
-    b_pks = b_minus_a.select(pk).rdd.flatMap(lambda x: x).collect()
-    same_key_diff_val = list(set(a_pks) & set(b_pks))
+    start_time = time.time()
+    common_keys_with_diff_a = a_minus_b.subtract(a.join(b, ["facility_id"], "leftanti"))
+    common_keys_with_diff_a.cache()
+    common_keys_with_diff_a.head()
 
-    result_diff['same_key_but_diff_values'] = get_diff_same_keys(a_minus_b, b_minus_a, column_names, pk, same_key_diff_val)
+    common_keys_with_diff_b = b_minus_a.subtract(b.join(a, ["facility_id"], "leftanti"))
+    common_keys_with_diff_b.cache()
+    common_keys_with_diff_b.head()
+
+    print("[LOG] common_keys_with_diff...: %s" % (time.time() - start_time))
+
+    start_time = time.time()
+    result_diff['same_key_but_diff_values'] = get_diff_same_keys(common_keys_with_diff_a, common_keys_with_diff_b, column_names, pk)
+    print("[LOG] get_diff_same_keys: %s" % (time.time() - start_time))
+
+    start_time = time.time()
     result_diff['same_key_but_diff_values'] = sorted(result_diff['same_key_but_diff_values'], key = lambda x: x[pk])
+    print("[LOG] sorted(result_diff['same_key_but_diff_values']...: %s" % (time.time() - start_time))
 
     # 5. List the symmetric difference with the exception from step 4
     if len(a_minus_b.take(1)) > 0:
-        a_minus_b_2 = a_minus_b.subtract(a_minus_b[a_minus_b[pk].isin(same_key_diff_val)])
-        result_diff['a_not_in_b'] = list(a_minus_b_2.select(pk).toPandas()[pk])
+        start_time = time.time()
+        only_in_a = a_minus_b.subtract(common_keys_with_diff_a)
+        result_diff['a_not_in_b'] = list(only_in_a.select(pk).toPandas()[pk])
         result_diff['a_not_in_b'].sort()
+        print("[LOG] result_diff['a_not_in_b']: %s" % (time.time() - start_time))
 
     if len(b_minus_a.take(1)) > 0:
-        b_minus_a_2 = b_minus_a.subtract(b_minus_a[b_minus_a[pk].isin(same_key_diff_val)])
-        result_diff['b_not_in_a'] = list(b_minus_a_2.select(pk).toPandas()[pk])
+        start_time = time.time()
+        only_in_b = b_minus_a.subtract(common_keys_with_diff_b)
+        result_diff['b_not_in_a'] = list(only_in_b.select(pk).toPandas()[pk])
         result_diff['b_not_in_a'].sort()
+        print("[LOG] result_diff['b_not_in_a']: %s" % (time.time() - start_time))
 
     return True, { "message": "Mismatch on some rows.", "difference": result_diff }
 
