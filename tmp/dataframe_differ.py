@@ -162,7 +162,7 @@ def apply_columns_to_compare(a, cols_a, b, cols_b):
 
     b = b.select(['`{0}`'.format(col) for col in cols_b.split(',')])
     old_schema_b = b.schema.names
-    new_schema_b = [col[col.rfind(".")+1:].lower() for col in old_schema]
+    new_schema_b = [col[col.rfind(".")+1:].lower() for col in old_schema_b]
     b = reduce(lambda b, idx: b.withColumnRenamed(old_schema_b[idx], new_schema_b[idx]), xrange(len(old_schema_b)), b)
 
     return a, b
@@ -206,7 +206,8 @@ def get_diff(a, b, pk):
     start_time = time.time()
     a_minus_b = a.subtract(a.intersect(b))
     a_minus_b.cache()
-    a_minus_b.head()
+    if a.count() == a_minus_b.count():
+        return True, { "message": "No common records. Both datasets are entirely different." }
     print("[LOG] a_minus_b: %s" % (time.time() - start_time))
 
     start_time = time.time()
@@ -223,11 +224,11 @@ def get_diff(a, b, pk):
     column_names = a.schema.names
 
     start_time = time.time()
-    common_keys_with_diff_a = a_minus_b.subtract(a.join(b, ["facility_id"], "leftanti"))
+    common_keys_with_diff_a = a_minus_b.subtract(a.join(b, [pk], "leftanti"))
     common_keys_with_diff_a.cache()
     common_keys_with_diff_a.head()
 
-    common_keys_with_diff_b = b_minus_a.subtract(b.join(a, ["facility_id"], "leftanti"))
+    common_keys_with_diff_b = b_minus_a.subtract(b.join(a, [pk], "leftanti"))
     common_keys_with_diff_b.cache()
     common_keys_with_diff_b.head()
 
