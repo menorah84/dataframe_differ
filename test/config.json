@@ -1,0 +1,7 @@
+{
+  "sparkJobName": "test1",
+  "source1": {"type": "csv", "hasHeader": true, "separator": ",", "filepath": "test/data_a.csv" },
+  "source2": {"type": "csv", "hasHeader": true, "separator": ",", "filepath": "test/data_b.csv" },
+  "primaryKey": "cust_id",
+  "output": "output.json"
+}
